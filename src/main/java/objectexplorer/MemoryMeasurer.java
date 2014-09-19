@@ -97,7 +97,7 @@ public class MemoryMeasurer {
   }
 
   private enum DummyEnum {
-    CONSTANT;
+    CONSTANT
   }
 
   private static class MemoryMeasurerVisitor implements ObjectVisitor<Long> {

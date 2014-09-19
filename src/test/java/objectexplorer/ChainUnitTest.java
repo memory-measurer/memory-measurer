@@ -47,8 +47,6 @@ public class ChainUnitTest {
     }
   }
 
-  ;
-
   public Object dummy1;
   public List<?> dummy2;
   public int dummyint;
@@ -199,7 +197,7 @@ public class ChainUnitTest {
 
     assertThat(chain.hasParent(), is(equalTo(true)));
     assertThat(chain.getParent(), is(notNullValue(Chain.class)));
-    assertThat(chain.getParent().getValue(), is(sameInstance((Object) value1)));
+    assertThat(chain.getParent().getValue(), is(sameInstance(value1)));
     assertThat(chain.getRoot(), is(sameInstance((Object) root)));
     assertThat(chain.getValue(), is(sameInstance(link1)));
     assertThat((Class) chain.getValueType(), is(equalTo((Class) DUMMY2_FIELD.getType())));

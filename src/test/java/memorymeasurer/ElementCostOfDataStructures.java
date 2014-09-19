@@ -109,7 +109,7 @@ enum EntryFactories implements EntryFactory {
     public Object get() {
       return new DelayedElement();
     }
-  };
+  }
 }
 
 interface Populator<C> {
