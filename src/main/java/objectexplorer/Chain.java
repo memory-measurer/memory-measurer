@@ -1,32 +1,32 @@
 /*******************************************************************************
  * BEGIN COPYRIGHT NOTICE
- * 
+ *
  * Copyright [2009] [Dimitrios Andreou]
  * Copyright [2011] [Rodrigo Lemos]
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * 
+ *
  * END COPYRIGHT NOTICE
  ******************************************************************************/
 package objectexplorer;
 
 import com.google.common.base.Preconditions;
-import java.lang.reflect.Field;
-import java.util.Iterator;
-import java.util.LinkedList;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.lang.reflect.Field;
+import java.util.Iterator;
+import java.util.LinkedList;
 
 /**
  * A chain of references, which starts at a root object and leads to a
@@ -70,9 +70,12 @@ public abstract class Chain {
 
   /**
    * Returns the parent chain, from which this chain was created.
+   *
    * @throws IllegalStateException if {@code !hasParent()}, then an
    */
-  public @Nonnull Chain getParent() {
+  public
+  @Nonnull
+  Chain getParent() {
     Preconditions.checkState(parent != null, "This is the root value, it has no parent");
     return parent;
   }
@@ -81,11 +84,15 @@ public abstract class Chain {
    * Returns the value that this chain leads to. If the value is a primitive,
    * a wrapper object is returned instead.
    */
-  public @Nullable Object getValue() {
+  public
+  @Nullable
+  Object getValue() {
     return value;
   }
 
-  public abstract @Nonnull Class<?> getValueType();
+  public abstract
+  @Nonnull
+  Class<?> getValueType();
 
   /**
    * Returns whether the connection of the parent chain and this chain is
@@ -114,7 +121,9 @@ public abstract class Chain {
   /**
    * Returns the root object of this chain.
    */
-  public @Nonnull Object getRoot() {
+  public
+  @Nonnull
+  Object getRoot() {
     Chain current = this;
     while (current.hasParent()) {
       current = current.getParent();
@@ -133,7 +142,8 @@ public abstract class Chain {
     return reverseChain;
   }
 
-  @Override public String toString() {
+  @Override
+  public String toString() {
     StringBuilder sb = new StringBuilder(32);
 
     Iterator<Chain> it = reverse().iterator();
@@ -142,9 +152,9 @@ public abstract class Chain {
       sb.append("->");
       Chain current = it.next();
       if (current.isThroughField()) {
-        sb.append(((FieldChain)current).getField().getName());
+        sb.append(((FieldChain) current).getField().getName());
       } else if (current.isThroughArrayIndex()) {
-        sb.append("[").append(((ArrayIndexChain)current).getArrayIndex()).append("]");
+        sb.append("[").append(((ArrayIndexChain) current).getArrayIndex()).append("]");
       }
     }
     return sb.toString();

@@ -1,21 +1,21 @@
 /*******************************************************************************
  * BEGIN COPYRIGHT NOTICE
- * 
+ *
  * Copyright [2009] [Dimitrios Andreou]
  * Copyright [2011] [Rodrigo Lemos]
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * 
+ *
  * END COPYRIGHT NOTICE
  ******************************************************************************/
 package memorymeasurer;
@@ -53,6 +53,10 @@ import com.google.common.collect.Table;
 import com.google.common.collect.TreeBasedTable;
 import com.google.common.collect.TreeMultimap;
 import com.google.common.collect.TreeMultiset;
+import objectexplorer.MemoryMeasurer;
+import objectexplorer.ObjectGraphMeasurer;
+import objectexplorer.ObjectGraphMeasurer.Footprint;
+
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -77,11 +81,52 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import objectexplorer.MemoryMeasurer;
-import objectexplorer.ObjectGraphMeasurer;
-import objectexplorer.ObjectGraphMeasurer.Footprint;
+
+enum EntryFactories implements EntryFactory {
+  REGULAR {
+    public Class<?> getEntryType() {
+      return Element.class;
+    }
+
+    public Object get() {
+      return new Element();
+    }
+  },
+  COMPARABLE {
+    public Class<?> getEntryType() {
+      return ComparableElement.class;
+    }
+
+    public Object get() {
+      return new ComparableElement();
+    }
+  },
+  DELAYED {
+    public Class<?> getEntryType() {
+      return DelayedElement.class;
+    }
+
+    public Object get() {
+      return new DelayedElement();
+    }
+  };
+}
+
+interface Populator<C> {
+  Class<?> getEntryType();
+
+  C construct(int entries);
+}
+
+interface EntryFactory extends Supplier {
+  Class<?> getEntryType();
+}
 
 public class ElementCostOfDataStructures {
+  private static final ImmutableSet<Class<?>> primitiveTypes = ImmutableSet.<Class<?>>of(
+      boolean.class, byte.class, char.class, short.class,
+      int.class, float.class, long.class, double.class);
+
   public static void main(String[] args) throws Exception {
     caption(String.format("    %2s-bit architecture   ", System.getProperty("sun.arch.data.model")));
     caption("  Basic Lists, Sets, Maps ");
@@ -105,104 +150,252 @@ public class ElementCostOfDataStructures {
     caption("ConcurrentHashMap/MapMaker");
 
     analyze(new MapPopulator(defaultSupplierFor(ConcurrentHashMap.class)));
-    analyzeMapMaker("MapMaker", new Supplier<MapMaker>() { public MapMaker get() { return
-      new MapMaker(); } });
-    analyze("MapMaker_Expires", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().expiration(5*60*60*24, TimeUnit.SECONDS).makeMap(); } }));
-    analyze("MapMaker_Evicts", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).makeMap(); } }));
-    analyze("MapMaker_Expires_Evicts", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).expiration(3*60*60*24, TimeUnit.SECONDS).makeMap(); } }));
-    analyze("MapMaker_SoftKeys", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().softKeys().makeMap(); } }));
-    analyze("MapMaker_SoftValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().softValues().makeMap(); } }));
-    analyze("MapMaker_SoftKeysValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().softKeys().softValues().makeMap(); } }));
-    analyze("MapMaker_Evicts_SoftKeys", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).softKeys().makeMap(); } }));
-    analyze("MapMaker_Evicts_SoftValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).softValues().makeMap(); } }));
-    analyze("MapMaker_Evicts_SoftKeysValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).softKeys().softValues().makeMap(); } }));
-    analyze("MapMaker_Expires_SoftKeys", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().expiration(3*60*60*24, TimeUnit.SECONDS).softKeys().makeMap(); } }));
-    analyze("MapMaker_Expires_SoftValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().expiration(3*60*60*24, TimeUnit.SECONDS).softValues().makeMap(); } }));
-    analyze("MapMaker_Expires_SoftKeysValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().expiration(3*60*60*24, TimeUnit.SECONDS).softKeys().softValues().makeMap(); } }));
-    analyze("MapMaker_Expires_Evicts_SoftKeys", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).expiration(3*60*60*24, TimeUnit.SECONDS).softKeys().makeMap(); } }));
-    analyze("MapMaker_Expires_Evicts_SoftValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).expiration(3*60*60*24, TimeUnit.SECONDS).softValues().makeMap(); } }));
-    analyze("MapMaker_Expires_Evicts_SoftKeysValues", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      new MapMaker().maximumSize(1000000).expiration(3*60*60*24, TimeUnit.SECONDS).softKeys().softValues().makeMap(); } }));
+    analyzeMapMaker("MapMaker", new Supplier<MapMaker>() {
+      public MapMaker get() {
+        return
+            new MapMaker();
+      }
+    });
+    analyze("MapMaker_Expires", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().expiration(5 * 60 * 60 * 24, TimeUnit.SECONDS).makeMap();
+      }
+    }));
+    analyze("MapMaker_Evicts", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_Evicts", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).makeMap();
+      }
+    }));
+    analyze("MapMaker_SoftKeys", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().softKeys().makeMap();
+      }
+    }));
+    analyze("MapMaker_SoftValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_SoftKeysValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().softKeys().softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_Evicts_SoftKeys", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).softKeys().makeMap();
+      }
+    }));
+    analyze("MapMaker_Evicts_SoftValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_Evicts_SoftKeysValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).softKeys().softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_SoftKeys", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).softKeys().makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_SoftValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_SoftKeysValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).softKeys().softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_Evicts_SoftKeys", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).softKeys().makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_Evicts_SoftValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).softValues().makeMap();
+      }
+    }));
+    analyze("MapMaker_Expires_Evicts_SoftKeysValues", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            new MapMaker().maximumSize(1000000).expiration(3 * 60 * 60 * 24, TimeUnit.SECONDS).softKeys().softValues().makeMap();
+      }
+    }));
 
     caption("        Multisets         ");
 
-    analyze("HashMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() { public Multiset get() { return
-      HashMultiset.create(); } }));
-    analyze("LinkedHashMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() { public Multiset get() { return
-      LinkedHashMultiset.create(); } }));
-    analyze("TreeMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() { public Multiset get() { return
-      TreeMultiset.create(); } }, EntryFactories.COMPARABLE));
-    analyze("ConcurrentHashMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() { public Multiset get() { return
-      ConcurrentHashMultiset.create(); } }));
+    analyze("HashMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            HashMultiset.create();
+      }
+    }));
+    analyze("LinkedHashMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            LinkedHashMultiset.create();
+      }
+    }));
+    analyze("TreeMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            TreeMultiset.create();
+      }
+    }, EntryFactories.COMPARABLE));
+    analyze("ConcurrentHashMultiset_Worst", new MultisetPopulator_Worst(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            ConcurrentHashMultiset.create();
+      }
+    }));
 
     System.out.println();
 
-    analyze("HashMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() { public Multiset get() { return
-      HashMultiset.create(); } }));
-    analyze("LinkedHashMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() { public Multiset get() { return
-      LinkedHashMultiset.create(); } }));
-    analyze("TreeMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() { public Multiset get() { return
-      TreeMultiset.create(); } }, EntryFactories.COMPARABLE));
-    analyze("ConcurrentHashMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() { public Multiset get() { return
-      ConcurrentHashMultiset.create(); } }));
+    analyze("HashMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            HashMultiset.create();
+      }
+    }));
+    analyze("LinkedHashMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            LinkedHashMultiset.create();
+      }
+    }));
+    analyze("TreeMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            TreeMultiset.create();
+      }
+    }, EntryFactories.COMPARABLE));
+    analyze("ConcurrentHashMultiset_Best ", new MultisetPopulator_Best(new Supplier<Multiset>() {
+      public Multiset get() {
+        return
+            ConcurrentHashMultiset.create();
+      }
+    }));
 
     caption("        Multimaps         ");
 
-    analyze("HashMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() { public Multimap get() { return
-      HashMultimap.create(); } }));
-    analyze("LinkedHashMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() { public Multimap get() { return
-      LinkedHashMultimap.create(); } }));
-    analyze("TreeMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() { public Multimap get() { return
-      TreeMultimap.create(); } }, EntryFactories.COMPARABLE));
-    analyze("ArrayListMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() { public Multimap get() { return
-      ArrayListMultimap.create(); } }));
-    analyze("LinkedListMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() { public Multimap get() { return
-      LinkedListMultimap.create(); } }));
+    analyze("HashMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            HashMultimap.create();
+      }
+    }));
+    analyze("LinkedHashMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            LinkedHashMultimap.create();
+      }
+    }));
+    analyze("TreeMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            TreeMultimap.create();
+      }
+    }, EntryFactories.COMPARABLE));
+    analyze("ArrayListMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            ArrayListMultimap.create();
+      }
+    }));
+    analyze("LinkedListMultimap_Worst", new MultimapPopulator_Worst(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            LinkedListMultimap.create();
+      }
+    }));
     analyze(new ImmutableMultimapPopulator_Worst());
     analyze(new ImmutableListMultimapPopulator_Worst());
     analyze(new ImmutableSetMultimapPopulator_Worst());
 
     System.out.println();
 
-    analyze("HashMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() { public Multimap get() { return
-      HashMultimap.create(); } }));
-    analyze("LinkedHashMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() { public Multimap get() { return
-      LinkedHashMultimap.create(); } }));
-    analyze("TreeMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() { public Multimap get() { return
-      TreeMultimap.create(); } }, EntryFactories.COMPARABLE));
-    analyze("ArrayListMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() { public Multimap get() { return
-      ArrayListMultimap.create(); } }));
-    analyze("LinkedListMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() { public Multimap get() { return
-      LinkedListMultimap.create(); } }));
+    analyze("HashMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            HashMultimap.create();
+      }
+    }));
+    analyze("LinkedHashMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            LinkedHashMultimap.create();
+      }
+    }));
+    analyze("TreeMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            TreeMultimap.create();
+      }
+    }, EntryFactories.COMPARABLE));
+    analyze("ArrayListMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            ArrayListMultimap.create();
+      }
+    }));
+    analyze("LinkedListMultimap_Best ", new MultimapPopulator_Best(new Supplier<Multimap>() {
+      public Multimap get() {
+        return
+            LinkedListMultimap.create();
+      }
+    }));
     analyze(new ImmutableMultimapPopulator_Best());
     analyze(new ImmutableListMultimapPopulator_Best());
     analyze(new ImmutableSetMultimapPopulator_Best());
 
     caption("          Tables          ");
 
-    analyze("HashBasedTable", new TablePopulator_Worst(new Supplier<Table>() { public Table get() { return
-      HashBasedTable.create(); } } ));
-    analyze("TreeBasedTable", new TablePopulator_Worst(new Supplier<Table>() { public Table get() { return
-      TreeBasedTable.create(); } }, EntryFactories.COMPARABLE));
+    analyze("HashBasedTable", new TablePopulator_Worst(new Supplier<Table>() {
+      public Table get() {
+        return
+            HashBasedTable.create();
+      }
+    }));
+    analyze("TreeBasedTable", new TablePopulator_Worst(new Supplier<Table>() {
+      public Table get() {
+        return
+            TreeBasedTable.create();
+      }
+    }, EntryFactories.COMPARABLE));
 
     caption("          BiMaps          ");
 
-    analyze("HashBiMap", new MapPopulator(new Supplier<Map>() { public Map get() { return
-      HashBiMap.create(); } }));
+    analyze("HashBiMap", new MapPopulator(new Supplier<Map>() {
+      public Map get() {
+        return
+            HashBiMap.create();
+      }
+    }));
     analyze(new ImmutableBiMapPopulator());
 
     caption("           Misc           ");
@@ -234,32 +427,6 @@ public class ElementCostOfDataStructures {
   private static void analyzeMapMaker(String caption, Supplier<MapMaker> supplier) {
     analyze(caption, new MapPopulator(new MapSupplier(supplier)));
     analyze(caption + "_Computing", new MapPopulator(new ComputingMapSupplier(supplier)));
-  }
-
-  private static class MapSupplier implements Supplier<Map> {
-    private final Supplier<MapMaker> mapMakerSupplier;
-    MapSupplier(Supplier<MapMaker> mapMakerSupplier) {
-      this.mapMakerSupplier = mapMakerSupplier;
-    }
-
-    public Map get() {
-      return mapMakerSupplier.get().makeMap();
-    }
-  }
-
-  private static class ComputingMapSupplier implements Supplier<Map> {
-    private final Supplier<MapMaker> mapMakerSupplier;
-    ComputingMapSupplier(Supplier<MapMaker> mapMakerSupplier) {
-      this.mapMakerSupplier = mapMakerSupplier;
-    }
-
-    public Map get() {
-      return mapMakerSupplier.get().makeComputingMap(new Function() {
-        public Object apply(Object o) {
-          return o;
-        }
-      });
-    }
   }
 
   static void analyze(Populator<?> populator) {
@@ -296,7 +463,7 @@ public class ElementCostOfDataStructures {
 
     double objects = (footprint2.getObjects() - footprint1.getObjects()) / (double) entriesToAdd;
     double refs = (footprint2.getReferences() - footprint1.getReferences()) / (double) entriesToAdd;
-    double bytes = (bytes2 - bytes1) / (double)entriesToAdd;
+    double bytes = (bytes2 - bytes1) / (double) entriesToAdd;
 
     Map<Class<?>, Double> primitives = Maps.newHashMap();
     for (Class<?> primitiveType : primitiveTypes) {
@@ -310,15 +477,44 @@ public class ElementCostOfDataStructures {
     return new AvgEntryCost(objects, refs, primitives, bytes);
   }
 
-  private static final ImmutableSet<Class<?>> primitiveTypes = ImmutableSet.<Class<?>>of(
-      boolean.class, byte.class, char.class, short.class,
-      int.class, float.class, long.class, double.class);
+  static <C> DefaultConstructorSupplier<C> defaultSupplierFor(Class<C> clazz) throws NoSuchMethodException {
+    return new DefaultConstructorSupplier(clazz);
+  }
+
+  private static class MapSupplier implements Supplier<Map> {
+    private final Supplier<MapMaker> mapMakerSupplier;
+
+    MapSupplier(Supplier<MapMaker> mapMakerSupplier) {
+      this.mapMakerSupplier = mapMakerSupplier;
+    }
+
+    public Map get() {
+      return mapMakerSupplier.get().makeMap();
+    }
+  }
+
+  private static class ComputingMapSupplier implements Supplier<Map> {
+    private final Supplier<MapMaker> mapMakerSupplier;
+
+    ComputingMapSupplier(Supplier<MapMaker> mapMakerSupplier) {
+      this.mapMakerSupplier = mapMakerSupplier;
+    }
+
+    public Map get() {
+      return mapMakerSupplier.get().makeComputingMap(new Function() {
+        public Object apply(Object o) {
+          return o;
+        }
+      });
+    }
+  }
 
   private static class AvgEntryCost {
     final double objects;
     final double refs;
     final ImmutableMap<Class<?>, Double> primitives;
     final double bytes;
+
     AvgEntryCost(double objects, double refs, Map<Class<?>, Double> primitives, double bytes) {
       this.objects = objects;
       this.refs = refs;
@@ -329,9 +525,11 @@ public class ElementCostOfDataStructures {
 
   private static class DefaultConstructorSupplier<C> implements Supplier<C> {
     private final Constructor<C> constructor;
+
     DefaultConstructorSupplier(Class<C> clazz) throws NoSuchMethodException {
       this.constructor = clazz.getConstructor();
     }
+
     public C get() {
       try {
         return constructor.newInstance();
@@ -345,21 +543,15 @@ public class ElementCostOfDataStructures {
       return constructor.getDeclaringClass().getSimpleName();
     }
   }
-
-  static <C> DefaultConstructorSupplier<C> defaultSupplierFor(Class<C> clazz) throws NoSuchMethodException {
-    return new DefaultConstructorSupplier(clazz);
-  }
-}
-
-interface Populator<C> {
-  Class<?> getEntryType();
-
-  C construct(int entries);
 }
 
 abstract class AbstractPopulator<C> implements Populator<C> {
   private final EntryFactory entryFactory;
-  AbstractPopulator() { this(EntryFactories.REGULAR); }
+
+  AbstractPopulator() {
+    this(EntryFactories.REGULAR);
+  }
+
   AbstractPopulator(EntryFactory entryFactory) {
     this.entryFactory = entryFactory;
   }
@@ -433,6 +625,7 @@ class MultimapPopulator_Worst extends MutablePopulator<Multimap> {
   MultimapPopulator_Worst(Supplier<? extends Multimap> multimapFactory) {
     super(multimapFactory);
   }
+
   MultimapPopulator_Worst(Supplier<? extends Multimap> multimapFactory, EntryFactory entryFactory) {
     super(multimapFactory, entryFactory);
   }
@@ -443,14 +636,16 @@ class MultimapPopulator_Worst extends MutablePopulator<Multimap> {
 }
 
 class MultimapPopulator_Best extends MutablePopulator<Multimap> {
+  private final Object key = newEntry();
+
   MultimapPopulator_Best(Supplier<? extends Multimap> multimapFactory) {
     super(multimapFactory);
   }
+
   MultimapPopulator_Best(Supplier<? extends Multimap> multimapFactory, EntryFactory entryFactory) {
     super(multimapFactory, entryFactory);
   }
 
-  private final Object key = newEntry();
   public void addEntry(Multimap multimap) {
     multimap.put(key, newEntry());
   }
@@ -460,6 +655,7 @@ class MultisetPopulator_Worst extends MutablePopulator<Multiset> {
   MultisetPopulator_Worst(Supplier<? extends Multiset> multisetFactory) {
     super(multisetFactory);
   }
+
   MultisetPopulator_Worst(Supplier<? extends Multiset> multisetFactory, EntryFactory entryFactory) {
     super(multisetFactory, entryFactory);
   }
@@ -470,14 +666,16 @@ class MultisetPopulator_Worst extends MutablePopulator<Multiset> {
 }
 
 class MultisetPopulator_Best extends MutablePopulator<Multiset> {
+  private final Object key = newEntry();
+
   MultisetPopulator_Best(Supplier<? extends Multiset> multisetFactory) {
     super(multisetFactory);
   }
+
   MultisetPopulator_Best(Supplier<? extends Multiset> multisetFactory, EntryFactory entryFactory) {
     super(multisetFactory, entryFactory);
   }
 
-  private final Object key = newEntry();
   public void addEntry(Multiset multiset) {
     multiset.add(key);
   }
@@ -487,6 +685,7 @@ class TablePopulator_Worst extends MutablePopulator<Table> {
   TablePopulator_Worst(Supplier<? extends Table> tableFactory) {
     super(tableFactory);
   }
+
   TablePopulator_Worst(Supplier<? extends Table> tableFactory, EntryFactory entryFactory) {
     super(tableFactory, entryFactory);
   }
@@ -496,7 +695,9 @@ class TablePopulator_Worst extends MutablePopulator<Table> {
   }
 }
 
-/** Immutable classes */
+/**
+ * Immutable classes
+ */
 
 class ImmutableListPopulator extends AbstractPopulator<ImmutableList> {
   public ImmutableList construct(int entries) {
@@ -720,32 +921,23 @@ class ImmutableMultisetPopulator_Best extends AbstractPopulator<ImmutableMultise
   }
 }
 
-interface EntryFactory extends Supplier {
-  Class<?> getEntryType();
+class Element {
 }
-
-enum EntryFactories implements EntryFactory {
-  REGULAR {
-    public Class<?> getEntryType() { return Element.class; }
-    public Object get() { return new Element(); }
-  },
-  COMPARABLE {
-    public Class<?> getEntryType() { return ComparableElement.class; }
-    public Object get() { return new ComparableElement(); }
-  },
-  DELAYED {
-    public Class<?> getEntryType() { return DelayedElement.class; }
-    public Object get() { return new DelayedElement(); }
-  };
-}
-
-class Element { }
 
 class ComparableElement extends Element implements Comparable {
-  public int compareTo(Object o) { if (this == o) return 0; else return 1; }
+  public int compareTo(Object o) {
+    if (this == o) return 0;
+    else return 1;
+  }
 }
 
 class DelayedElement extends Element implements Delayed {
-  public long getDelay(TimeUnit unit) { return 0; }
-  public int compareTo(Delayed o) { if (this == o) return 0; else return 1; }
+  public long getDelay(TimeUnit unit) {
+    return 0;
+  }
+
+  public int compareTo(Delayed o) {
+    if (this == o) return 0;
+    else return 1;
+  }
 }
